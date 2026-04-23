@@ -53,3 +53,18 @@ Each request includes:
 
 - Streaming responses are consumed as SSE (`data:` lines).
 - Tool calls are collected from streamed deltas and emitted when the model finishes with `tool_calls`.
+
+## Image Support
+
+Both models support image input. When you attach an image in VS Code Copilot Chat, it will be sent to the Kimi API as a base64-encoded data URL in the format:
+
+```json
+{
+  "type": "image_url",
+  "image_url": {
+    "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+  }
+}
+```
+
+Supported image formats: PNG, JPEG, GIF, WebP, and other common image types.

@@ -18,9 +18,17 @@ function getDefaultHeaders(apiKey: string): Record<string, string> {
 	};
 }
 
+export interface KimiMessageContent {
+	type: "text" | "image_url";
+	text?: string;
+	image_url?: {
+		url: string;
+	};
+}
+
 export interface KimiMessage {
 	role: "system" | "user" | "assistant" | "tool";
-	content: string;
+	content: string | KimiMessageContent[];
 	name?: string;
 	tool_calls?: KimiToolCall[];
 	tool_call_id?: string;

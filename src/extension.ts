@@ -41,6 +41,16 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.lm.registerLanguageModelChatProvider("moonshot", provider),
 	);
 
+	context.subscriptions.push(provider);
+
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration((event) => {
+			if (event.affectsConfiguration("languageModelChatProviders")) {
+				provider.refreshLanguageModelChatInformation();
+			}
+		}),
+	);
+
 	context.subscriptions.push(
 		vscode.commands.registerCommand("kimi.testConnection", runConnectionTest),
 	);

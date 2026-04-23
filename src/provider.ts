@@ -35,6 +35,7 @@ function findTrailingPartialMatch(buffer: string, tag: string): number {
 function processThinkingContent(
 	content: string,
 	state: ThinkingState,
+	preserveThinking: boolean = false,
 ): { output: string; state: ThinkingState } {
 	let output = "";
 	let buffer = state.buffer + content;
@@ -42,7 +43,11 @@ function processThinkingContent(
 
 	while (buffer.length > 0) {
 		const tag = insideThinking ? THINK_CLOSE : THINK_OPEN;
-		const replacement = insideThinking ? THINK_CLOSE_REPLACEMENT : THINK_OPEN_REPLACEMENT;
+		const replacement = preserveThinking
+			? tag
+			: insideThinking
+				? THINK_CLOSE_REPLACEMENT
+				: THINK_OPEN_REPLACEMENT;
 		const tagIdx = buffer.indexOf(tag);
 
 		if (tagIdx !== -1) {
@@ -158,6 +163,18 @@ function mapKimiApiError(error: KimiApiError): Error {
 
 export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 	private apiKey: string | undefined;
+	private readonly onDidChangeLanguageModelChatInformationEmitter = new vscode.EventEmitter<void>();
+
+	readonly onDidChangeLanguageModelChatInformation =
+		this.onDidChangeLanguageModelChatInformationEmitter.event;
+
+	dispose(): void {
+		this.onDidChangeLanguageModelChatInformationEmitter.dispose();
+	}
+
+	refreshLanguageModelChatInformation(): void {
+		this.onDidChangeLanguageModelChatInformationEmitter.fire();
+	}
 
 	provideLanguageModelChatInformation(
 		options: vscode.PrepareLanguageModelChatModelOptions,
@@ -215,7 +232,7 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 					const delta = choice.delta;
 
 					if (delta.content) {
-						const result = processThinkingContent(delta.content, thinkingState);
+						const result = processThinkingContent(delta.content, thinkingState, thinking);
 						thinkingState = result.state;
 						if (result.output) {
 							progress.report(new vscode.LanguageModelTextPart(result.output));
@@ -253,12 +270,20 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		}
 
 		let totalChars = 0;
+		let imageCount = 0;
 		for (const part of text.content) {
 			if (part instanceof vscode.LanguageModelTextPart) {
 				totalChars += part.value.length;
+			} else if (part instanceof vscode.LanguageModelDataPart) {
+				if (part.mimeType?.startsWith("image/")) {
+					imageCount++;
+				}
 			}
 		}
-		return Promise.resolve(Math.ceil(totalChars / 4));
+		// Rough estimate: text tokens + image tokens (each image ~256 tokens)
+		const textTokens = Math.ceil(totalChars / 4);
+		const imageTokens = imageCount * 256;
+		return Promise.resolve(textTokens + imageTokens);
 	}
 
 	private convertMessages(
@@ -268,13 +293,14 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 
 		for (const msg of messages) {
 			const role = this.convertRole(msg.role);
-			let content = "";
+			let contentParts: Array<{ type: "text" | "image_url"; text?: string; image_url?: { url: string } }> = [];
 			let toolCalls: KimiMessage["tool_calls"] | undefined;
 			let toolCallId: string | undefined;
+			let hasNonTextContent = false;
 
 			for (const part of msg.content) {
 				if (part instanceof vscode.LanguageModelTextPart) {
-					content += part.value;
+					contentParts.push({ type: "text", text: part.value });
 				} else if (part instanceof vscode.LanguageModelToolCallPart) {
 					if (!toolCalls) toolCalls = [];
 					toolCalls.push({
@@ -287,12 +313,29 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 					});
 				} else if (part instanceof vscode.LanguageModelToolResultPart) {
 					toolCallId = part.callId;
-					content =
+					const content =
 						typeof part.content === "string"
 							? part.content
 							: JSON.stringify(part.content);
+					contentParts.push({ type: "text", text: content });
+				} else if (part instanceof vscode.LanguageModelDataPart) {
+					hasNonTextContent = true;
+					// Handle image data
+					if (part.mimeType?.startsWith("image/")) {
+						const base64Data = Buffer.from(part.data).toString("base64");
+						const dataUrl = `data:${part.mimeType};base64,${base64Data}`;
+						contentParts.push({
+							type: "image_url",
+							image_url: { url: dataUrl },
+						});
+					}
 				}
 			}
+
+			// If we only have text content, use string format for backward compatibility
+			const content = hasNonTextContent
+				? contentParts
+				: contentParts.map(p => p.text || "").join("");
 
 			if (toolCallId) {
 				result.push({ role: "tool", content, tool_call_id: toolCallId });

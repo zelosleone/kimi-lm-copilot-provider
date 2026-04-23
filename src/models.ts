@@ -27,7 +27,19 @@ export const KIMI_MODELS: KimiModelInfo[] = [
 		maxOutputTokens: 32768,
 		baseUrl: "https://api.kimi.com/coding/v1",
 		thinking: false,
-		capabilities: { imageInput: false, toolCalling: true },
+		capabilities: { imageInput: true, toolCalling: true },
+	},
+	{
+		id: "kimi-for-coding-thinking",
+		name: "Kimi for Coding (Thinking)",
+		family: "kimi",
+		version: "for-coding-thinking",
+		tooltip: "Moonshot AI",
+		maxInputTokens: 262144,
+		maxOutputTokens: 32768,
+		baseUrl: "https://api.kimi.com/coding/v1",
+		thinking: true,
+		capabilities: { imageInput: true, toolCalling: true },
 	},
 ];
 
