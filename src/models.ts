@@ -1,22 +1,5 @@
 import type * as vscode from "vscode";
 
-const KIMI_CONFIGURATION_SCHEMA = {
-	properties: {
-		thinkingMode: {
-			type: "string",
-			title: "Thinking",
-			enum: ["enabled", "disabled"],
-			enumItemLabels: ["On", "Off"],
-			default: "enabled",
-			group: "navigation",
-		},
-	},
-} as const;
-
-type ModelPickerInformation = vscode.LanguageModelChatInformation & {
-	configurationSchema?: unknown;
-};
-
 interface KimiModelInfo {
 	id: string;
 	name: string;
@@ -25,7 +8,6 @@ interface KimiModelInfo {
 	maxInputTokens: number;
 	maxOutputTokens: number;
 	tooltip: string;
-	baseUrl: string;
 	thinking: boolean;
 	/**
 	 * When true, streaming must include a terminal `data: [DONE]` SSE event (strict Moonshot behavior).
@@ -47,7 +29,6 @@ export const KIMI_MODELS: KimiModelInfo[] = [
 		tooltip: "Moonshot AI",
 		maxInputTokens: 262144,
 		maxOutputTokens: 32768,
-		baseUrl: "https://api.kimi.com/coding/v1",
 		thinking: true,
 		requireSseDoneMarker: false,
 		capabilities: { imageInput: true, toolCalling: true },
@@ -56,7 +37,7 @@ export const KIMI_MODELS: KimiModelInfo[] = [
 
 export function toLanguageModelChatInformation(
 	model: KimiModelInfo,
-): ModelPickerInformation {
+): vscode.LanguageModelChatInformation {
 	const {
 		id,
 		name,
@@ -77,7 +58,7 @@ export function toLanguageModelChatInformation(
 		detail: tooltip,
 		maxInputTokens,
 		maxOutputTokens,
+		isUserSelectable: true,
 		capabilities,
-		configurationSchema: KIMI_CONFIGURATION_SCHEMA,
-	};
+	} as vscode.LanguageModelChatInformation;
 }

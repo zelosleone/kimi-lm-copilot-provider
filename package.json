@@ -2,37 +2,58 @@
 	"name": "kimi-lm-provider",
 	"displayName": "Kimi Language Model Provider for Copilot",
 	"description": "Registers Kimi (Moonshot AI) models as VS Code language model providers for Copilot Chat",
-	"version": "0.1.5",
+	"version": "0.2.0",
 	"publisher": "DenizhanDaklr",
 	"license": "MIT",
 	"repository": "https://github.com/zelosleone/kimi-lm-copilot-provider",
 	"icon": "images/icon.png",
 	"engines": {
-		"vscode": "^1.118.0"
+		"vscode": "^1.120.0"
 	},
-
 	"categories": [
 		"AI",
 		"Chat"
 	],
-	"activationEvents": [],
+	"activationEvents": [
+		"onStartupFinished",
+		"onLanguageModelChatProvider:moonshot"
+	],
+	"enabledApiProposals": [
+		"languageModelThinkingPart"
+	],
 	"extensionKind": [
 		"ui"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
+		"configuration": {
+			"title": "Kimi",
+			"properties": {
+				"kimi.apiBaseUrl": {
+					"type": "string",
+					"default": "https://api.kimi.com/coding/v1",
+					"scope": "application",
+					"markdownDescription": "Kimi API base URL. Use `https://api.kimi.com/coding/v1` for global users, `https://api.kimi.cn/coding/v1` for users in China, or `https://api.kimi.ai/coding/v1` as an alternative endpoint. Must end with `/coding/v1`."
+				}
+			}
+		},
 		"languageModelChatProviders": [
 			{
 				"vendor": "moonshot",
 				"displayName": "Moonshot",
 				"configuration": {
+					"type": "object",
 					"properties": {
 						"apiKey": {
 							"type": "string",
 							"description": "API key from kimi.com/code/console",
+							"title": "API key",
 							"secret": true
 						}
-					}
+					},
+					"required": [
+						"apiKey"
+					]
 				}
 			}
 		],
@@ -40,6 +61,22 @@
 			{
 				"command": "kimi.testConnection",
 				"title": "Kimi: Test Connection"
+			},
+			{
+				"command": "kimi.setBaseUrl.global",
+				"title": "Kimi: Set API Endpoint to Global (kimi.com)"
+			},
+			{
+				"command": "kimi.setBaseUrl.china",
+				"title": "Kimi: Set API Endpoint to China (kimi.cn)"
+			},
+			{
+				"command": "kimi.setBaseUrl.ai",
+				"title": "Kimi: Set API Endpoint to Alternative (kimi.ai)"
+			},
+			{
+				"command": "kimi.setBaseUrl.custom",
+				"title": "Kimi: Set Custom API Endpoint"
 			}
 		]
 	},
@@ -50,7 +87,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "20.19.30",
-		"@types/vscode": "^1.118.0",
+		"@types/vscode": "^1.120.0",
 		"typescript": "5.9.3"
 	}
 }

@@ -6,6 +6,7 @@ import {
 	type KimiMessage,
 	type KimiTool,
 } from "./api.js";
+import { getApiBaseUrl } from "./config.js";
 import { KIMI_MODELS, toLanguageModelChatInformation } from "./models.js";
 import { assistantToolCallThinkingPayload } from "./reasoning.js";
 
@@ -29,13 +30,35 @@ function getObjectProperty(
 function getApiKey(
 	options: vscode.PrepareLanguageModelChatModelOptions,
 ): string | undefined {
-	const configuration = getObjectProperty(options, "configuration");
-	const apiKey = getObjectProperty(configuration, "apiKey");
-	if (typeof apiKey !== "string") {
-		return undefined;
+	// VS Code 1.120+ passes provider config as modelConfiguration
+	const modelConfig = getObjectProperty(options, "modelConfiguration");
+	const fromModelConfig = getStringProperty(modelConfig, "apiKey");
+	if (fromModelConfig) {
+		return fromModelConfig;
 	}
 
-	const normalized = apiKey.trim();
+	// VS Code <=1.119 passes provider config as configuration
+	const configuration = getObjectProperty(options, "configuration");
+	const fromLegacyConfig = getStringProperty(configuration, "apiKey");
+	if (fromLegacyConfig) {
+		return fromLegacyConfig;
+	}
+
+	return undefined;
+}
+
+function getStringProperty(
+	source: unknown,
+	key: string,
+): string | undefined {
+	if (!source || typeof source !== "object") {
+		return undefined;
+	}
+	const value = (source as Record<string, unknown>)[key];
+	if (typeof value !== "string") {
+		return undefined;
+	}
+	const normalized = value.trim();
 	return normalized.length > 0 ? normalized : undefined;
 }
 
@@ -122,6 +145,12 @@ function mapKimiApiError(error: KimiApiError): Error {
 
 export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 	private apiKey: string | undefined;
+	private readonly modelsChangedEmitter = new vscode.EventEmitter<void>();
+	readonly onDidChangeLanguageModelChatInformation = this.modelsChangedEmitter.event;
+
+	notifyModelsChanged(): void {
+		this.modelsChangedEmitter.fire();
+	}
 
 	provideLanguageModelChatInformation(
 		options: vscode.PrepareLanguageModelChatModelOptions,
@@ -129,6 +158,11 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 	): vscode.ProviderResult<vscode.LanguageModelChatInformation[]> {
 		const key = getApiKey(options);
 		if (!key) {
+			// No API key configured yet — return empty so VS Code doesn't
+			// duplicate model entries during the base vendor scan.
+			// Once the user sets an API key via the model picker, VS Code
+			// will call this method again with the configuration present.
+			this.apiKey = undefined;
 			return [];
 		}
 
@@ -156,7 +190,7 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		const kimiTools = this.convertTools(options.tools);
 		const maxTokens = options.modelOptions?.maxTokens as number | undefined;
 		const promptCacheKey = getPromptCacheKey(options);
-		const baseUrl = modelDef?.baseUrl ?? "https://api.kimi.com/coding/v1";
+		const baseUrl = getApiBaseUrl();
 		const requireSseDoneMarker = modelDef?.requireSseDoneMarker ?? true;
 
 		try {
@@ -343,11 +377,11 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 				const content: KimiMessage["content"] =
 					imageParts.length > 0
 						? [
-								...(textParts.length > 0
-									? textParts.map((t) => ({ type: "text" as const, text: t }))
-									: []),
-								...imageParts,
-							]
+							...(textParts.length > 0
+								? textParts.map((t) => ({ type: "text" as const, text: t }))
+								: []),
+							...imageParts,
+						]
 						: textParts.join("");
 				result.push({ role, content, name: msg.name });
 			}
@@ -446,8 +480,16 @@ function readStringOption(
 	options: vscode.ProvideLanguageModelChatResponseOptions,
 	key: string,
 ): string | undefined {
-	const opts = options as { modelConfiguration?: Record<string, unknown>; configuration?: Record<string, unknown> };
+	// VS Code 1.120+: model-level config may be passed via modelOptions
+	if (options.modelOptions) {
+		const value = options.modelOptions[key];
+		if (typeof value === "string" && value.trim()) {
+			return value.trim();
+		}
+	}
 
+	// VS Code 1.120 runtime: provider config passed as modelConfiguration
+	const opts = options as { modelConfiguration?: Record<string, unknown>; configuration?: Record<string, unknown> };
 	const modelConfig = opts.modelConfiguration;
 	if (modelConfig && typeof modelConfig === "object") {
 		const value = modelConfig[key];
@@ -456,6 +498,7 @@ function readStringOption(
 		}
 	}
 
+	// VS Code <=1.119: provider config passed as configuration
 	const legacyConfig = opts.configuration;
 	if (legacyConfig && typeof legacyConfig === "object") {
 		const value = legacyConfig[key];
