@@ -1,10 +1,43 @@
 import * as vscode from "vscode";
-import { hostname } from "node:os";
+import { hostname, type, release, machine, version } from "node:os";
 import { randomUUID } from "node:crypto";
 
 const CHAT_ENDPOINT = "/chat/completions";
-const VERSION = "0.1.2";
+const VERSION = "1.47.0";
 const DEVICE_ID = randomUUID().replace(/-/g, "");
+
+function asciiHeaderValue(value: string, fallback = "unknown"): string {
+	const sanitized = value.replace(/[^\x20-\x7e]/g, "").trim();
+	return sanitized || fallback;
+}
+
+function kimiDeviceModel(): string {
+	const system = type();
+	const rel = release();
+	const mach = machine?.() ?? "";
+
+	if (system === "Darwin") {
+		return `macOS ${rel} ${mach}`.trim();
+	}
+
+	if (system === "Windows_NT") {
+		const parts = rel.split(".");
+		const build = Number(parts[2] ?? "");
+		const label =
+			parts[0] === "10"
+				? Number.isFinite(build) && build >= 22000
+					? "11"
+					: "10"
+				: rel;
+		return `Windows ${label} ${mach}`.trim();
+	}
+
+	if (system) {
+		return `${system} ${rel} ${mach}`.trim();
+	}
+
+	return "Unknown";
+}
 
 function getDefaultHeaders(apiKey: string): Record<string, string> {
 	return {
@@ -13,8 +46,12 @@ function getDefaultHeaders(apiKey: string): Record<string, string> {
 		"User-Agent": `KimiCLI/${VERSION}`,
 		"X-Msh-Platform": "kimi_cli",
 		"X-Msh-Version": VERSION,
-		"X-Msh-Device-Name": hostname() || "unknown",
+		"X-Msh-Device-Name": asciiHeaderValue(hostname() || "unknown"),
+		"X-Msh-Device-Model": asciiHeaderValue(kimiDeviceModel()),
 		"X-Msh-Device-Id": DEVICE_ID,
+		"X-Msh-Os-Version": asciiHeaderValue(
+			version?.() || `${type()} ${release()}`,
+		),
 	};
 }
 

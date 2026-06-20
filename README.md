@@ -49,7 +49,9 @@ Each request includes:
 - `X-Msh-Platform: kimi_cli`
 - `X-Msh-Version: <version>`
 - `X-Msh-Device-Name: <hostname>`
+- `X-Msh-Device-Model: <OS model>`
 - `X-Msh-Device-Id: <generated device id>`
+- `X-Msh-Os-Version: <OS version>`
 
 ## Streaming and Tools
 

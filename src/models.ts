@@ -27,7 +27,7 @@ export const KIMI_MODELS: KimiModelInfo[] = [
 		family: "kimi",
 		version: "for-coding",
 		tooltip: "Moonshot AI",
-		maxInputTokens: 262144,
+		maxInputTokens: 229376,
 		maxOutputTokens: 32768,
 		thinking: true,
 		requireSseDoneMarker: false,
