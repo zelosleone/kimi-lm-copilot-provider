@@ -56,6 +56,5 @@ Each request includes:
 ## Streaming and Tools
 
 - Streaming responses are consumed as SSE (`data:` lines).
-- Reasoning content (`reasoning_content`) is streamed and rendered in collapsible `<details><summary>Thinking</summary>` blocks.
+- Reasoning content (`reasoning_content`) is streamed as plain text before the main response. VS Code Copilot Chat renders it inline in the assistant bubble.
 - Tool calls are collected from streamed deltas and emitted when the model finishes with `tool_calls`.
-- If the model returns tool calls after reasoning, the reasoning block is automatically closed before the tool calls are emitted.
