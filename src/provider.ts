@@ -225,7 +225,8 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 					const delta = choice.delta;
 
 					if (delta.reasoning_content) {
-						reportThinkingPart(delta.reasoning_content);
+						// Stream reasoning as plain text so Copilot Chat always renders it
+						progress.report(new vscode.LanguageModelTextPart(delta.reasoning_content));
 					}
 
 					if (delta.content) {
