@@ -10,6 +10,31 @@ VS Code language model provider that connects Copilot Chat to Moonshot Kimi. Jus
 4. Load the extension in VS Code.
 5. Configure `apiKey` from `kimi.com/code/console` in the model provider settings.
 
+## Custom Models
+
+The built-in model list only contains `kimi-for-coding`. You can add or override models via the `kimi.models` setting — entries are merged with the built-in defaults by `id` (same `id` overrides fields, new `id` adds a model). The model picker refreshes as soon as the setting changes.
+
+```json
+"kimi.models": [
+  {
+    "id": "k3-256k",
+    "name": "Kimi K3 (256K)",
+    "maxInputTokens": 262144,
+    "maxOutputTokens": 32768
+  },
+  {
+    "id": "k3",
+    "name": "Kimi K3 (1M)",
+    "maxInputTokens": 1048576,
+    "maxOutputTokens": 32768
+  }
+]
+```
+
+Only `id` is required; missing fields fall back to defaults (`maxInputTokens: 262144`, `maxOutputTokens: 32768`, thinking + tool calling enabled). Use this to try new models without waiting for an extension update.
+
+Recommended: use `k3-256k` by default (cheaper on quota); switch to `k3` when you need the 1M context window.
+
 ## API
 
 - Base URL: `https://api.kimi.com/coding/v1`

@@ -2,7 +2,7 @@
 	"name": "kimi-lm-provider",
 	"displayName": "Kimi Language Model Provider for Copilot",
 	"description": "Registers Kimi (Moonshot AI) models as VS Code language model providers for Copilot Chat",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"publisher": "DenizhanDaklr",
 	"license": "MIT",
 	"repository": "https://github.com/zelosleone/kimi-lm-copilot-provider",
@@ -34,6 +34,58 @@
 					"default": "https://api.kimi.com/coding/v1",
 					"scope": "application",
 					"markdownDescription": "Kimi API base URL. Use `https://api.kimi.com/coding/v1` for global users, `https://api.kimi.cn/coding/v1` for users in China, or `https://api.kimi.ai/coding/v1` as an alternative endpoint. Must end with `/coding/v1`."
+				},
+				"kimi.models": {
+					"type": "array",
+					"default": [],
+					"scope": "application",
+					"markdownDescription": "Custom Kimi model list. Entries are merged with the built-in defaults by `id`: same `id` overrides fields, new `id` adds a model. Example: `[{\"id\": \"k3-256k\", \"name\": \"Kimi K3 (256K)\", \"maxInputTokens\": 262144}]` — recommended default is `k3-256k` (cheaper on quota); use `k3` when you need the 1M context window.",
+					"items": {
+						"type": "object",
+						"required": [
+							"id"
+						],
+						"properties": {
+							"id": {
+								"type": "string"
+							},
+							"name": {
+								"type": "string"
+							},
+							"family": {
+								"type": "string"
+							},
+							"version": {
+								"type": "string"
+							},
+							"maxInputTokens": {
+								"type": "number"
+							},
+							"maxOutputTokens": {
+								"type": "number"
+							},
+							"tooltip": {
+								"type": "string"
+							},
+							"thinking": {
+								"type": "boolean"
+							},
+							"requireSseDoneMarker": {
+								"type": "boolean"
+							},
+							"capabilities": {
+								"type": "object",
+								"properties": {
+									"imageInput": {
+										"type": "boolean"
+									},
+									"toolCalling": {
+										"type": "boolean"
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 		},

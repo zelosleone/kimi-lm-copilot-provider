@@ -3,6 +3,7 @@ import { KimiApiClient, KimiApiError, summarizeErrorResponse } from "./api";
 import {
 	API_BASE_URL_KEY,
 	CONFIG_SECTION,
+	MODELS_KEY,
 	getApiBaseUrl,
 	PRESET_URLS,
 	setApiBaseUrl,
@@ -80,7 +81,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.workspace.onDidChangeConfiguration((event) => {
 			if (
 				event.affectsConfiguration("moonshot") ||
-				event.affectsConfiguration(`${CONFIG_SECTION}.${API_BASE_URL_KEY}`)
+				event.affectsConfiguration(`${CONFIG_SECTION}.${API_BASE_URL_KEY}`) ||
+				event.affectsConfiguration(`${CONFIG_SECTION}.${MODELS_KEY}`)
 			) {
 				provider.notifyModelsChanged();
 			}

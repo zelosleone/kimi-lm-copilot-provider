@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
+import { KIMI_MODELS, mergeModels, type KimiModelInfo } from "./models.js";
 
 export const CONFIG_SECTION = "kimi";
 export const API_BASE_URL_KEY = "apiBaseUrl";
+export const MODELS_KEY = "models";
 
 export const PRESET_URLS = {
     global: "https://api.kimi.com/coding/v1",
@@ -16,6 +18,15 @@ export function getApiBaseUrl(): string {
         return url.trim();
     }
     return PRESET_URLS.global;
+}
+
+export function getModels(): KimiModelInfo[] {
+    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    const overrides = config.get<unknown[]>(MODELS_KEY);
+    if (!Array.isArray(overrides) || overrides.length === 0) {
+        return KIMI_MODELS;
+    }
+    return mergeModels(KIMI_MODELS, overrides);
 }
 
 export async function setApiBaseUrl(
