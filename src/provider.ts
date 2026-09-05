@@ -6,8 +6,8 @@ import {
 	type KimiMessage,
 	type KimiTool,
 } from "./api.js";
-import { getApiBaseUrl } from "./config.js";
-import { KIMI_MODELS, toLanguageModelChatInformation } from "./models.js";
+import { getApiBaseUrl, getModels } from "./config.js";
+import { toLanguageModelChatInformation, type KimiModelInfo } from "./models.js";
 import { assistantToolCallThinkingPayload } from "./reasoning.js";
 
 interface ToolCallBuilder {
@@ -167,7 +167,7 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		}
 
 		this.apiKey = key;
-		return KIMI_MODELS.map(toLanguageModelChatInformation);
+		return getModels().map(toLanguageModelChatInformation);
 	}
 
 	async provideLanguageModelChatResponse(
@@ -184,7 +184,7 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		}
 
 		const client = new KimiApiClient(this.apiKey);
-		const modelDef = KIMI_MODELS.find((m) => m.id === model.id);
+		const modelDef = getModels().find((m) => m.id === model.id);
 		const thinking = this.resolveThinkingEnabled(modelDef, options);
 		const kimiMessages = this.convertMessages(messages, thinking);
 		const kimiTools = this.convertTools(options.tools);
@@ -419,7 +419,7 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 	}
 
 	private resolveThinkingEnabled(
-		modelDef: (typeof KIMI_MODELS)[number] | undefined,
+		modelDef: KimiModelInfo | undefined,
 		options: vscode.ProvideLanguageModelChatResponseOptions,
 	): boolean {
 		if (!modelDef?.thinking) {
