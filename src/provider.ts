@@ -197,6 +197,7 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 	private servedInfos: vscode.LanguageModelChatInformation[] = [];
 	private devCache: ModelsDevCache = { models: {} };
 	private lastCatalogRefreshAttempt = 0;
+	private catalogRefresh: Promise<void> | undefined;
 	private lastKey: string | undefined;
 	private lastBaseUrl: string | undefined;
 	private charsPerToken = 4;
@@ -272,9 +273,13 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		this.apiKey = key;
 		this.lastKey = key;
 		this.lastBaseUrl = getApiBaseUrl();
-		// Serve the cached catalog immediately (fast, never blocks the
-		// picker on network) and refresh lazily in the background.
-		this.maybeRefreshCatalog(key, this.lastBaseUrl);
+		// Serve the cached catalog immediately and refresh lazily in the
+		// background. With no catalog yet (first run), wait for the refresh
+		// so the picker is not empty.
+		const refresh = this.maybeRefreshCatalog(key, this.lastBaseUrl);
+		if (refresh && this.servedInfos.length === 0) {
+			return refresh.then(() => this.servedInfos);
+		}
 		return this.servedInfos;
 	}
 
@@ -283,13 +288,15 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 	 * exists in request options (no secrets-stored key), so refreshes
 	 * happen lazily here when a key is present.
 	 */
-	private maybeRefreshCatalog(key: string, baseUrl: string): void {
+	private maybeRefreshCatalog(key: string, baseUrl: string): Promise<void> | undefined {
 		const now = Date.now();
-		if (now - this.lastCatalogRefreshAttempt < KimiChatProvider.CATALOG_REFRESH_COOLDOWN_MS) {
-			return;
+		if (now - this.lastCatalogRefreshAttempt >= KimiChatProvider.CATALOG_REFRESH_COOLDOWN_MS) {
+			this.lastCatalogRefreshAttempt = now;
+			this.catalogRefresh = this.refreshModels(key, baseUrl).finally(() => {
+				this.catalogRefresh = undefined;
+			});
 		}
-		this.lastCatalogRefreshAttempt = now;
-		void this.refreshModels(key, baseUrl);
+		return this.catalogRefresh;
 	}
 
 	private async refreshModels(key: string, baseUrl: string): Promise<void> {
