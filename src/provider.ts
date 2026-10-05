@@ -5,9 +5,20 @@ import {
 	summarizeErrorResponse,
 	type KimiMessage,
 	type KimiTool,
+	type KimiUsage,
 } from "./api.js";
 import { getApiBaseUrl } from "./config.js";
-import { KIMI_MODELS, mergeKimiModels, resolveKimiModel, toLanguageModelChatInformation, type KimiModelInfo } from "./models.js";
+import {
+	buildCatalogModels,
+	toLanguageModelChatInformation,
+	type CatalogModel,
+} from "./models.js";
+import {
+	resolveModelsDev,
+	resolveReasoningChoice,
+	reasoningRequestFields,
+	type ModelsDevCache,
+} from "./modelsDev.js";
 import { assistantToolCallThinkingPayload } from "./reasoning.js";
 
 interface ToolCallBuilder {
@@ -60,6 +71,38 @@ function getStringProperty(
 	}
 	const normalized = value.trim();
 	return normalized.length > 0 ? normalized : undefined;
+}
+
+/** Live reasoning picker value from the request options. */
+function getConfiguredReasoningEffort(
+	options: vscode.ProvideLanguageModelChatResponseOptions,
+): unknown {
+	const opts = options as {
+		modelConfiguration?: Record<string, unknown>;
+		configuration?: Record<string, unknown>;
+	};
+	return opts.modelConfiguration?.reasoningEffort ?? opts.configuration?.reasoningEffort;
+}
+
+/**
+ * kimi-cli + opencode mapping: reasoningRequestFields gives
+ * thinking {type} (+ reasoning_effort for levels); Kimi coding keeps
+ * `keep: 'all'` on enabled thinking.
+ */
+function kimiReasoningFields(value: string | undefined): Record<string, unknown> {
+	const fields = reasoningRequestFields(value, "enabled");
+	const thinking = fields.thinking as { type?: string } | undefined;
+	if (thinking?.type === "enabled") {
+		return { ...fields, thinking: { ...thinking, keep: "all" } };
+	}
+	return fields;
+}
+
+/** JSON length with image data (data URLs) removed. */
+function strippedJsonLength(value: unknown): number {
+	return JSON.stringify(value, (_key, v: unknown) =>
+		typeof v === "string" && v.startsWith("data:") ? "" : v,
+	).length;
 }
 
 function getPromptCacheKey(
@@ -144,42 +187,68 @@ function mapKimiApiError(error: KimiApiError): Error {
 }
 
 export class KimiChatProvider implements vscode.LanguageModelChatProvider {
-	private static readonly MODEL_CATALOG_CACHE_KEY = "kimi.modelCatalog.v1";
+	private static readonly MODEL_CATALOG_CACHE_KEY = "kimi.modelCatalog.v2";
+	private static readonly CHARS_PER_TOKEN_KEY = "kimi.charsPerToken";
 	private static readonly CATALOG_REFRESH_COOLDOWN_MS = 30_000;
+	private static readonly CATALOG_REFRESH_INTERVAL_MS = 30 * 60_000;
 
 	private apiKey: string | undefined;
-	private availableModels: KimiModelInfo[];
+	private availableModels: CatalogModel[] = [];
+	private servedInfos: vscode.LanguageModelChatInformation[] = [];
+	private devCache: ModelsDevCache = { models: {} };
 	private lastCatalogRefreshAttempt = 0;
+	private lastKey: string | undefined;
+	private lastBaseUrl: string | undefined;
+	private charsPerToken = 4;
 	private readonly modelsChangedEmitter = new vscode.EventEmitter<void>();
 	readonly onDidChangeLanguageModelChatInformation = this.modelsChangedEmitter.event;
 
 	constructor(private readonly globalState?: vscode.Memento) {
-		this.availableModels = this.loadCachedCatalog();
+		this.hydrateCatalog();
+		const timer = setInterval(() => {
+			if (this.lastKey && this.lastBaseUrl) {
+				this.lastCatalogRefreshAttempt = 0;
+				this.maybeRefreshCatalog(this.lastKey, this.lastBaseUrl);
+			}
+		}, KimiChatProvider.CATALOG_REFRESH_INTERVAL_MS);
+		if (typeof (timer as unknown as { unref?: unknown }).unref === "function") {
+			(timer as unknown as { unref: () => void }).unref();
+		}
 	}
 
-	/** Load the persisted catalog; fall back to the known list. */
-	private loadCachedCatalog(): KimiModelInfo[] {
+	/** Hydrate persisted { devCache, models } plus the token counter. */
+	private hydrateCatalog(): void {
 		try {
-			const cached = this.globalState?.get<{
-			savedAt?: unknown;
-			models?: unknown;
-		}>(KimiChatProvider.MODEL_CATALOG_CACHE_KEY);
-			const models = cached?.models;
-			if (
-				Array.isArray(models) &&
-				models.length > 0 &&
-				models.every(
-					(m): m is KimiModelInfo =>
-						!!m && typeof m === "object" &&
-						typeof (m as { id?: unknown }).id === "string",
-				)
-			) {
-				return [...models];
+			const cpt = this.globalState?.get<unknown>(KimiChatProvider.CHARS_PER_TOKEN_KEY);
+			if (typeof cpt === "number" && Number.isFinite(cpt) && cpt >= 1 && cpt <= 12) {
+				this.charsPerToken = cpt;
 			}
 		} catch {
-			// Corrupt cache — fall through to the known list.
+			// Best-effort; keep the default.
 		}
-		return [...KIMI_MODELS];
+		try {
+			const cached = this.globalState?.get<{
+				devCache?: unknown;
+				models?: unknown;
+			}>(KimiChatProvider.MODEL_CATALOG_CACHE_KEY);
+			const devCache = cached?.devCache as ModelsDevCache | undefined;
+			const models = cached?.models as CatalogModel[] | undefined;
+			if (
+				devCache !== null && typeof devCache === "object" &&
+				devCache.models !== null && typeof devCache.models === "object" &&
+				Array.isArray(models) &&
+				models.every((m) => !!m && typeof m === "object" && typeof (m as { id?: unknown }).id === "string")
+			) {
+				this.devCache = devCache;
+				this.availableModels = [...models];
+				this.servedInfos = models.map(toLanguageModelChatInformation);
+				return;
+			}
+		} catch {
+			// Corrupt cache — serve empty until the first refresh.
+		}
+		this.availableModels = [];
+		this.servedInfos = [];
 	}
 
 	notifyModelsChanged(): void {
@@ -201,11 +270,12 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		}
 
 		this.apiKey = key;
-		// Serve the merged catalog immediately (fast, never blocks the
+		this.lastKey = key;
+		this.lastBaseUrl = getApiBaseUrl();
+		// Serve the cached catalog immediately (fast, never blocks the
 		// picker on network) and refresh lazily in the background.
-		const infos = this.availableModels.map(toLanguageModelChatInformation);
-		this.maybeRefreshCatalog(key, getApiBaseUrl());
-		return infos;
+		this.maybeRefreshCatalog(key, this.lastBaseUrl);
+		return this.servedInfos;
 	}
 
 	/**
@@ -227,27 +297,46 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		try {
 			ids = await new KimiApiClient(key).listModels(baseUrl);
 		} catch {
-			// Network/auth failure — keep serving cache/known list.
+			// Network/auth failure — keep serving the cached catalog.
 			return;
 		}
 
-		const merged = mergeKimiModels(ids);
-		const current = this.availableModels.map((m) => m.id);
-		const next = merged.map((m) => m.id);
-		if (current.length === next.length && current.every((id) => next.includes(id))) {
+		let nextCache: ModelsDevCache;
+		try {
+			nextCache = await resolveModelsDev(baseUrl, ids, this.devCache);
+		} catch {
+			// models.dev failure — keep the previous catalog, do not invent data.
+			return;
+		}
+
+		const { models: merged } = buildCatalogModels(ids, nextCache);
+		if (merged.length === 0) {
+			return;
+		}
+
+		this.devCache = nextCache;
+		if (JSON.stringify(merged) === JSON.stringify(this.availableModels)) {
+			// Nothing changed for the picker; persist the revalidated cache only.
+			await this.persistCatalog();
 			return;
 		}
 
 		this.availableModels = merged;
+		this.servedInfos = merged.map(toLanguageModelChatInformation);
+		await this.persistCatalog();
+		this.modelsChangedEmitter.fire();
+	}
+
+	private async persistCatalog(): Promise<void> {
 		try {
 			await this.globalState?.update(KimiChatProvider.MODEL_CATALOG_CACHE_KEY, {
 				savedAt: Date.now(),
-				models: merged,
+				devCache: this.devCache,
+				models: this.availableModels,
 			});
 		} catch {
 			// Persistence is best-effort; the in-memory catalog still applies.
 		}
-		this.modelsChangedEmitter.fire();
 	}
 
 	async provideLanguageModelChatResponse(
@@ -264,14 +353,16 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		}
 
 		const client = new KimiApiClient(this.apiKey);
-		const modelDef = this.availableModels.find((m) => m.id === model.id) ?? resolveKimiModel(model.id);
-		const thinking = this.resolveThinkingEnabled(modelDef, options);
-		const kimiMessages = this.convertMessages(messages, thinking);
+		const entry = this.availableModels.find((m) => m.id === model.id);
+		const reasoningValue = resolveReasoningChoice(entry?.choices, getConfiguredReasoningEffort(options));
+		const reasoningFields = kimiReasoningFields(reasoningValue);
+		const thinkingEnabled = reasoningValue !== undefined && reasoningValue !== "off";
+		const kimiMessages = this.convertMessages(messages, thinkingEnabled);
 		const kimiTools = this.convertTools(options.tools);
+		const requestChars = strippedJsonLength({ messages: kimiMessages, tools: kimiTools });
 		const maxTokens = options.modelOptions?.maxTokens as number | undefined;
 		const promptCacheKey = getPromptCacheKey(options);
 		const baseUrl = getApiBaseUrl();
-		const requireSseDoneMarker = modelDef?.requireSseDoneMarker ?? true;
 
 		try {
 			const stream = client.streamChat(
@@ -281,10 +372,9 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 				{
 					maxTokens,
 					tools: kimiTools,
-					thinking,
+					reasoningFields,
 					promptCacheKey,
 					toolMode: options.toolMode,
-					requireSseDoneMarker,
 				},
 				token,
 			);
@@ -298,8 +388,30 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 				}
 			};
 
+			const reportUsage = (usage: KimiUsage): void => {
+				const cached = usage.prompt_tokens_details?.cached_tokens ?? 0;
+				const payload = JSON.stringify({
+					prompt_tokens: usage.prompt_tokens,
+					completion_tokens: usage.completion_tokens,
+					total_tokens: usage.total_tokens,
+					prompt_tokens_details: { cached_tokens: cached },
+				});
+				progress.report(
+					new vscode.LanguageModelDataPart(
+						new TextEncoder().encode(payload),
+						"usage",
+					) as unknown as vscode.LanguageModelResponsePart,
+				);
+				this.calibrateTokenCounter(requestChars, usage.prompt_tokens);
+			};
+
 			for await (const chunk of stream) {
 				if (token.isCancellationRequested) break;
+
+				const usage = chunk.usage ?? chunk.choices[0]?.usage;
+				if (usage) {
+					reportUsage(usage);
+				}
 
 				for (const choice of chunk.choices) {
 					const delta = choice.delta;
@@ -341,23 +453,24 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		_token: vscode.CancellationToken,
 	): Thenable<number> {
 		if (typeof text === "string") {
-			return Promise.resolve(Math.ceil(text.length / 4));
+			return Promise.resolve(Math.max(1, Math.round(text.length / this.charsPerToken)));
 		}
 
-		let totalChars = 0;
-		for (const part of text.content) {
-			if (part instanceof vscode.LanguageModelTextPart) {
-				totalChars += part.value.length;
-			} else if (part instanceof vscode.LanguageModelDataPart) {
-				totalChars += part.data.length;
-			} else if (isThinkingPart(part)) {
-				const thinkingValue = getValueFromThinkingPart(part);
-				if (thinkingValue) {
-					totalChars += thinkingValue.length;
-				}
-			}
+		const converted = this.convertMessages([text], false);
+		const chars = strippedJsonLength(converted);
+		return Promise.resolve(Math.max(1, Math.round(chars / this.charsPerToken)));
+	}
+
+	/** Recalibrate chars/token from live usage (Muse-proven EWMA). */
+	private calibrateTokenCounter(requestChars: number, promptTokens: number): void {
+		if (!Number.isFinite(promptTokens) || promptTokens <= 0) return;
+		const ratio = Math.min(12, Math.max(1, requestChars / promptTokens));
+		this.charsPerToken = 0.7 * this.charsPerToken + 0.3 * ratio;
+		try {
+			void this.globalState?.update(KimiChatProvider.CHARS_PER_TOKEN_KEY, this.charsPerToken);
+		} catch {
+			// Best-effort.
 		}
-		return Promise.resolve(Math.ceil(totalChars / 4));
 	}
 
 	private convertMessages(
@@ -497,22 +610,6 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 			},
 		}));
 	}
-
-	private resolveThinkingEnabled(
-		modelDef: KimiModelInfo | undefined,
-		options: vscode.ProvideLanguageModelChatResponseOptions,
-	): boolean {
-		if (!modelDef?.thinking) {
-			return false;
-		}
-
-		const mode = readStringOption(options, "thinkingMode");
-		if (mode === "disabled") {
-			return false;
-		}
-
-		return true;
-	}
 }
 
 function createThinkingPart(text: string): vscode.LanguageModelResponsePart | undefined {
@@ -554,38 +651,4 @@ function isThinkingPart(part: unknown): part is vscode.LanguageModelResponsePart
 	}
 
 	return part instanceof (vscodeWithThinking.LanguageModelThinkingPart as any);
-}
-
-function readStringOption(
-	options: vscode.ProvideLanguageModelChatResponseOptions,
-	key: string,
-): string | undefined {
-	// VS Code 1.120+: model-level config may be passed via modelOptions
-	if (options.modelOptions) {
-		const value = options.modelOptions[key];
-		if (typeof value === "string" && value.trim()) {
-			return value.trim();
-		}
-	}
-
-	// VS Code 1.120 runtime: provider config passed as modelConfiguration
-	const opts = options as { modelConfiguration?: Record<string, unknown>; configuration?: Record<string, unknown> };
-	const modelConfig = opts.modelConfiguration;
-	if (modelConfig && typeof modelConfig === "object") {
-		const value = modelConfig[key];
-		if (typeof value === "string" && value.trim()) {
-			return value.trim();
-		}
-	}
-
-	// VS Code <=1.119: provider config passed as configuration
-	const legacyConfig = opts.configuration;
-	if (legacyConfig && typeof legacyConfig === "object") {
-		const value = legacyConfig[key];
-		if (typeof value === "string" && value.trim()) {
-			return value.trim();
-		}
-	}
-
-	return undefined;
 }

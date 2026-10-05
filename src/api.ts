@@ -96,38 +96,44 @@ interface ChatOptions {
 	maxTokens?: number;
 	tools?: KimiTool[];
 	stop?: string[];
-	thinking?: boolean;
+	/** Live reasoning fields from reasoningRequestFields (thinking + reasoning_effort). Spread into the body. */
+	reasoningFields?: Record<string, unknown>;
 	promptCacheKey?: string;
 	toolMode?: vscode.LanguageModelChatToolMode;
-	/**
-	 * When true (default), the stream must end with `data: [DONE]` or an error is thrown (Moonshot streaming docs).
-	 * Kimi Coding (`api.kimi.com/coding`) may close the connection without sending `[DONE]`; set false for that endpoint.
-	 */
-	requireSseDoneMarker?: boolean;
+}
+
+export interface KimiUsage {
+	prompt_tokens: number;
+	completion_tokens: number;
+	total_tokens: number;
+	prompt_tokens_details?: { cached_tokens?: number };
 }
 
 interface KimiStreamChunk {
 	id: string;
 	created: number;
 	model: string;
-		choices: Array<{
-			index: number;
-			delta: {
-				role?: string;
-				content?: string;
-				reasoning_content?: string;
-				tool_calls?: Array<{
-					index: number;
-					id?: string;
-					type?: string;
-					function?: {
-						name?: string;
-						arguments?: string;
-					};
-				}>;
-			};
-			finish_reason: string | null;
-		}>;
+	/** Moonshot-style streams put usage at the top level or inside choices[0]. */
+	usage?: KimiUsage;
+	choices: Array<{
+		index: number;
+		delta: {
+			role?: string;
+			content?: string;
+			reasoning_content?: string;
+			tool_calls?: Array<{
+				index: number;
+				id?: string;
+				type?: string;
+				function?: {
+					name?: string;
+					arguments?: string;
+				};
+			}>;
+		};
+		finish_reason: string | null;
+		usage?: KimiUsage;
+	}>;
 }
 
 interface KimiResponse {
@@ -197,10 +203,6 @@ export class KimiApiClient {
 		const reader = response.body.getReader();
 		const decoder = new TextDecoder();
 		let buffer = "";
-		let sawDataEvent = false;
-		let sawDoneMarker = false;
-		const strictSseDone =
-			options?.requireSseDoneMarker !== false;
 
 		try {
 			while (true) {
@@ -221,30 +223,17 @@ export class KimiApiClient {
 					if (!trimmed || !trimmed.startsWith("data:")) continue;
 
 					const data = trimmed.slice(5).trim();
+					// [DONE] is optional for all models (lenient SSE).
 					if (data === "[DONE]") {
-						sawDoneMarker = true;
 						return;
 					}
 
-					sawDataEvent = true;
 					try {
 						yield JSON.parse(data) as KimiStreamChunk;
 					} catch {
 						console.warn("Malformed SSE chunk skipped:", data);
 					}
 				}
-			}
-
-			if (
-				strictSseDone &&
-				!cancellationToken?.isCancellationRequested &&
-				sawDataEvent &&
-				!sawDoneMarker
-			) {
-				throw new KimiApiError(
-					"Stream ended without a data: [DONE] chunk; the response may be incomplete (see Kimi streaming API documentation).",
-					0,
-				);
 			}
 		} finally {
 			reader.releaseLock();
@@ -309,16 +298,16 @@ export class KimiApiClient {
 		stream: boolean,
 		options?: ChatOptions,
 	): string {
-		const thinking = options?.thinking ?? false;
 		const body: Record<string, unknown> = {
 			model,
 			messages,
 			stream,
-			thinking: thinking
-				? { type: "enabled", keep: "all" }
-				: { type: "disabled" },
+			...(options?.reasoningFields ?? {}),
 		};
 
+		if (stream) {
+			body.stream_options = { include_usage: true };
+		}
 		if (options?.topP !== undefined) {
 			body.top_p = options.topP;
 		}
