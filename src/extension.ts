@@ -73,7 +73,7 @@ async function setCustomBaseUrl(provider: KimiChatProvider): Promise<void> {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-	const provider = new KimiChatProvider();
+	const provider = new KimiChatProvider(context.globalState);
 
 	context.subscriptions.push(
 		vscode.lm.registerLanguageModelChatProvider("moonshot", provider),

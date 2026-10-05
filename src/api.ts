@@ -1,8 +1,10 @@
 import * as vscode from "vscode";
 import { hostname, type, release, machine, version } from "node:os";
 import { randomUUID } from "node:crypto";
+import { EXCLUDED_MODEL_PATTERN } from "./models.js";
 
 const CHAT_ENDPOINT = "/chat/completions";
+const MODELS_ENDPOINT = "/models";
 const VERSION = "1.47.0";
 const DEVICE_ID = randomUUID().replace(/-/g, "");
 
@@ -39,7 +41,7 @@ function kimiDeviceModel(): string {
 	return "Unknown";
 }
 
-function getDefaultHeaders(apiKey: string): Record<string, string> {
+export function getDefaultHeaders(apiKey: string): Record<string, string> {
 	return {
 		"Content-Type": "application/json",
 		Authorization: `Bearer ${apiKey}`,
@@ -258,6 +260,47 @@ export class KimiApiClient {
 	): Promise<KimiResponse> {
 		const response = await this.sendRequest(model, messages, baseUrl, false, options, cancellationToken);
 		return response.json() as Promise<KimiResponse>;
+	}
+
+	/**
+	 * List available model ids via `GET {baseUrl}/models` using the same
+	 * headers as chat (KimiCLI UA + X-Msh-* + Bearer key). Parses the
+	 * OpenAI shape `{ data: [{ id }] }` and drops non-chat ids
+	 * (embeddings, rerankers, moderation, TTS, whisper).
+	 */
+	async listModels(baseUrl: string): Promise<string[]> {
+		const response = await fetch(`${baseUrl}${MODELS_ENDPOINT}`, {
+			method: "GET",
+			headers: this.headers,
+		});
+
+		if (!response.ok) {
+			const errorBody = await this.parseErrorBody(response);
+			throw new KimiApiError(
+				`Kimi API error: ${response.status} ${response.statusText}`,
+				response.status,
+				errorBody,
+			);
+		}
+
+		const body: unknown = await response.json();
+		const data =
+			body !== null && typeof body === "object" &&
+				Array.isArray((body as { data?: unknown }).data)
+				? (body as { data: unknown[] }).data
+				: [];
+
+		const ids: string[] = [];
+		for (const entry of data) {
+			const id =
+				entry !== null && typeof entry === "object"
+					? (entry as { id?: unknown }).id
+					: undefined;
+			if (typeof id !== "string" || id.length === 0) continue;
+			if (EXCLUDED_MODEL_PATTERN.test(id)) continue;
+			ids.push(id);
+		}
+		return ids;
 	}
 
 	private buildRequestBody(

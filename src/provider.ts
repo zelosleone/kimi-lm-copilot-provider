@@ -7,7 +7,7 @@ import {
 	type KimiTool,
 } from "./api.js";
 import { getApiBaseUrl } from "./config.js";
-import { KIMI_MODELS, toLanguageModelChatInformation } from "./models.js";
+import { KIMI_MODELS, mergeKimiModels, resolveKimiModel, toLanguageModelChatInformation, type KimiModelInfo } from "./models.js";
 import { assistantToolCallThinkingPayload } from "./reasoning.js";
 
 interface ToolCallBuilder {
@@ -144,9 +144,43 @@ function mapKimiApiError(error: KimiApiError): Error {
 }
 
 export class KimiChatProvider implements vscode.LanguageModelChatProvider {
+	private static readonly MODEL_CATALOG_CACHE_KEY = "kimi.modelCatalog.v1";
+	private static readonly CATALOG_REFRESH_COOLDOWN_MS = 30_000;
+
 	private apiKey: string | undefined;
+	private availableModels: KimiModelInfo[];
+	private lastCatalogRefreshAttempt = 0;
 	private readonly modelsChangedEmitter = new vscode.EventEmitter<void>();
 	readonly onDidChangeLanguageModelChatInformation = this.modelsChangedEmitter.event;
+
+	constructor(private readonly globalState?: vscode.Memento) {
+		this.availableModels = this.loadCachedCatalog();
+	}
+
+	/** Load the persisted catalog; fall back to the known list. */
+	private loadCachedCatalog(): KimiModelInfo[] {
+		try {
+			const cached = this.globalState?.get<{
+			savedAt?: unknown;
+			models?: unknown;
+		}>(KimiChatProvider.MODEL_CATALOG_CACHE_KEY);
+			const models = cached?.models;
+			if (
+				Array.isArray(models) &&
+				models.length > 0 &&
+				models.every(
+					(m): m is KimiModelInfo =>
+						!!m && typeof m === "object" &&
+						typeof (m as { id?: unknown }).id === "string",
+				)
+			) {
+				return [...models];
+			}
+		} catch {
+			// Corrupt cache — fall through to the known list.
+		}
+		return [...KIMI_MODELS];
+	}
 
 	notifyModelsChanged(): void {
 		this.modelsChangedEmitter.fire();
@@ -167,7 +201,53 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		}
 
 		this.apiKey = key;
-		return KIMI_MODELS.map(toLanguageModelChatInformation);
+		// Serve the merged catalog immediately (fast, never blocks the
+		// picker on network) and refresh lazily in the background.
+		const infos = this.availableModels.map(toLanguageModelChatInformation);
+		this.maybeRefreshCatalog(key, getApiBaseUrl());
+		return infos;
+	}
+
+	/**
+	 * Fire-and-forget catalog refresh with a 30s cooldown. The key only
+	 * exists in request options (no secrets-stored key), so refreshes
+	 * happen lazily here when a key is present.
+	 */
+	private maybeRefreshCatalog(key: string, baseUrl: string): void {
+		const now = Date.now();
+		if (now - this.lastCatalogRefreshAttempt < KimiChatProvider.CATALOG_REFRESH_COOLDOWN_MS) {
+			return;
+		}
+		this.lastCatalogRefreshAttempt = now;
+		void this.refreshModels(key, baseUrl);
+	}
+
+	private async refreshModels(key: string, baseUrl: string): Promise<void> {
+		let ids: string[];
+		try {
+			ids = await new KimiApiClient(key).listModels(baseUrl);
+		} catch {
+			// Network/auth failure — keep serving cache/known list.
+			return;
+		}
+
+		const merged = mergeKimiModels(ids);
+		const current = this.availableModels.map((m) => m.id);
+		const next = merged.map((m) => m.id);
+		if (current.length === next.length && current.every((id) => next.includes(id))) {
+			return;
+		}
+
+		this.availableModels = merged;
+		try {
+			await this.globalState?.update(KimiChatProvider.MODEL_CATALOG_CACHE_KEY, {
+				savedAt: Date.now(),
+				models: merged,
+			});
+		} catch {
+			// Persistence is best-effort; the in-memory catalog still applies.
+		}
+		this.modelsChangedEmitter.fire();
 	}
 
 	async provideLanguageModelChatResponse(
@@ -184,7 +264,7 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		}
 
 		const client = new KimiApiClient(this.apiKey);
-		const modelDef = KIMI_MODELS.find((m) => m.id === model.id);
+		const modelDef = this.availableModels.find((m) => m.id === model.id) ?? resolveKimiModel(model.id);
 		const thinking = this.resolveThinkingEnabled(modelDef, options);
 		const kimiMessages = this.convertMessages(messages, thinking);
 		const kimiTools = this.convertTools(options.tools);
@@ -419,7 +499,7 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 	}
 
 	private resolveThinkingEnabled(
-		modelDef: (typeof KIMI_MODELS)[number] | undefined,
+		modelDef: KimiModelInfo | undefined,
 		options: vscode.ProvideLanguageModelChatResponseOptions,
 	): boolean {
 		if (!modelDef?.thinking) {
