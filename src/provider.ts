@@ -21,6 +21,9 @@ import {
 } from "./modelsDev.js";
 import { assistantToolCallThinkingPayload } from "./reasoning.js";
 
+// Copilot sends its system prompt with the proposed System role, which the stable typings lack.
+const SYSTEM_ROLE = 3 as vscode.LanguageModelChatMessageRole;
+
 interface ToolCallBuilder {
 	id: string;
 	name: string;
@@ -594,10 +597,10 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		role: vscode.LanguageModelChatMessageRole,
 	): "system" | "user" | "assistant" {
 		switch (role) {
-			case vscode.LanguageModelChatMessageRole.User:
-				return "user";
 			case vscode.LanguageModelChatMessageRole.Assistant:
 				return "assistant";
+			case SYSTEM_ROLE:
+				return "system";
 			default:
 				return "user";
 		}
