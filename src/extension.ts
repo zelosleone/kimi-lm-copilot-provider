@@ -18,7 +18,7 @@ function formatConnectionError(err: unknown): string {
 	return `Kimi test failed: ${err instanceof Error ? err.message : String(err)}${detail}`;
 }
 
-async function runConnectionTest(): Promise<void> {
+async function runConnectionTest(provider: KimiChatProvider): Promise<void> {
 	const key = await vscode.window.showInputBox({
 		prompt: "Enter your Kimi API key to test",
 		password: true,
@@ -28,9 +28,10 @@ async function runConnectionTest(): Promise<void> {
 
 	const client = new KimiApiClient(key.trim());
 	const baseUrl = getApiBaseUrl();
+	const modelId = provider.firstServedModelId() ?? DEFAULT_MODEL_ID;
 	try {
 		await client.chat(
-			DEFAULT_MODEL_ID,
+			modelId,
 			[{ role: "user", content: "Ping" }],
 			baseUrl,
 			{ maxTokens: 1 },
@@ -85,7 +86,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				provider.notifyModelsChanged();
 			}
 		}),
-		vscode.commands.registerCommand("kimi.testConnection", runConnectionTest),
+		vscode.commands.registerCommand("kimi.testConnection", () => runConnectionTest(provider)),
 		vscode.commands.registerCommand("kimi.setBaseUrl.global", () =>
 			setBaseUrlAndNotify(provider, PRESET_URLS.global, "Global API (kimi.com)"),
 		),

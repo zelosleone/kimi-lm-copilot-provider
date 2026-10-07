@@ -259,6 +259,11 @@ export class KimiChatProvider implements vscode.LanguageModelChatProvider {
 		this.modelsChangedEmitter.fire();
 	}
 
+	/** First model currently served to the picker, if any. */
+	firstServedModelId(): string | undefined {
+		return this.availableModels[0]?.id;
+	}
+
 	provideLanguageModelChatInformation(
 		options: vscode.PrepareLanguageModelChatModelOptions,
 		_token: vscode.CancellationToken,

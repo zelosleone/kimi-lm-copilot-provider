@@ -6,7 +6,7 @@ Use your Kimi Code plan (Moonshot AI) in GitHub Copilot Chat.
 2. Pick a Kimi model in the model picker.
 3. Set reasoning effort right in the picker.
 
-The model list comes live from the Kimi Code API, and context windows, image support and effort levels come from [models.dev](https://models.dev), so new Kimi models show up without an update. Copilot's context window indicator works as usual.
+The model list comes live from the Kimi Code API, and context windows, image support and effort levels come from [models.dev](https://models.dev), so new Kimi models show up without an update. Brand-new models appear right away with safe default limits until models.dev lists them. Copilot's context window indicator works as usual.
 
 Reasoning Effort is live per model: Auto, Off and levels such as Low, High and Max where the model supports them. Auto sends nothing and lets Kimi decide. Temperature isn't sent; Kimi picks its own. Thinking blocks need VS Code Insiders (proposed API).
 

@@ -27,7 +27,7 @@ export interface CatalogModel {
 /**
  * Build live catalog entries from provider ids + models.dev cache.
  * Kimi's /models lists ids only, so all metadata comes from models.dev.
- * Ids with no context or output limit from either source are skipped.
+ * Ids with no context or output limit from either source use safe defaults.
  */
 export function buildCatalogModels(
 	ids: readonly string[],
@@ -36,10 +36,21 @@ export function buildCatalogModels(
 	const models: CatalogModel[] = [];
 	const skipped: string[] = [];
 	for (const id of ids) {
+		if (EXCLUDED_MODEL_PATTERN.test(id)) continue;
 		const dev = devCache.models[id];
 		const context = dev?.limit?.context;
 		const output = dev?.limit?.output;
 		if (typeof context !== "number" || typeof output !== "number") {
+			// A model the vendor lists before models.dev catalogs it still shows up, with safe limits, corrected on the next refresh once models.dev knows it.
+			const fallback = tokenLimits(131072, 32768);
+			models.push({
+				id,
+				name: dev?.name ?? id,
+				context: fallback.maxContextWindowTokens,
+				output: fallback.maxOutputTokens,
+				imageInput: false,
+				toolCalling: true,
+			});
 			skipped.push(id);
 			continue;
 		}
@@ -55,7 +66,7 @@ export function buildCatalogModels(
 		});
 	}
 	if (skipped.length > 0) {
-		console.warn(`Kimi: skipped models without live limits: ${skipped.join(", ")}`);
+		console.info(`Kimi: models using default limits: ${skipped.join(", ")}`);
 	}
 	return { models, skipped };
 }
