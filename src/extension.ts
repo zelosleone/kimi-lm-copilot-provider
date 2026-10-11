@@ -8,6 +8,7 @@ import {
 	setApiBaseUrl,
 } from "./config";
 import { KimiChatProvider } from "./provider";
+import { scheduleLodestarNotice } from "./lodestar";
 
 const DEFAULT_MODEL_ID = "kimi-for-coding";
 
@@ -100,6 +101,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			setCustomBaseUrl(provider),
 		),
 	);
+	scheduleLodestarNotice(context);
 }
 
 export function deactivate(): void { }
