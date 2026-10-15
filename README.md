@@ -2,7 +2,7 @@
 
 Use your Kimi Code plan (Moonshot AI) in GitHub Copilot Chat.
 
-> Also from the same developer: [Lodestar](https://marketplace.visualstudio.com/items?itemName=DenizhanDaklr.lodestar) walks you through how code works and reviews your changes, on any model in VS Code, including this extension's. $10, one time.
+> Also from the same developer: [Lodestar](https://marketplace.visualstudio.com/items?itemName=DenizhanDaklr.lodestar) walks you through how code works, explains anything you hover, and reviews your changes on any model in VS Code, including this extension's. 3 free runs included, then $5 one-time.
 
 1. In the Copilot Chat model picker, open **Manage Models**, pick **Moonshot** and paste your API key from [kimi.com/code/console](https://kimi.com/code/console).
 2. Pick a Kimi model in the model picker.
